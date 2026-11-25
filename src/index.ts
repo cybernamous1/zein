@@ -448,7 +448,7 @@ async function handleApi(c: Ctx): Promise<Response> {
     if (!m || !m.qr_object_key || (!m.enabled && u.role !== "owner")) fail(404, "QR code not found.");
     const obj = await env.FILES.get(m.qr_object_key);
     if (!obj) fail(404, "QR code not found.");
-    return fileResponse(obj.body, m.qr_content_type, `${m.name}-qr`, true);
+    return fileResponse(obj.body, m.qr_content_type, `${m.name || "payment"}-qr`, true);
   }
   if (path === "/api/receipts" && method === "POST") {
     const u = needStudent(c);
@@ -528,14 +528,27 @@ async function handleOwner(c: Ctx, path: string, method: string): Promise<Respon
     const rows = await env.DB.prepare("SELECT id,name,account_holder,account_identifier,instructions,enabled,sort_order,(qr_object_key IS NOT NULL) AS has_qr FROM payment_methods ORDER BY sort_order,created_at").all();
     return json({ methods: rows.results });
   }
-  const pmFields = (b: any) => {
-    const name = clean(b.name, 60); if (!name) fail(400, "Give the payment method a name.");
-    return [name, clean(b.accountHolder, 80) || null, clean(b.accountIdentifier, 120) || null, clean(b.instructions, 600) || null, b.enabled === false ? 0 : 1] as const;
+  const parsePm = async () => {
+    if ((req.headers.get("content-type") || "").includes("multipart/form-data")) {
+      const f = await req.formData().catch(() => fail(400, "Invalid form submission.")), files = filesOf(f);
+      if (files.length > 1) fail(400, "Upload only one QR code image.");
+      return { name: str(f, "name", 60), holder: str(f, "accountHolder", 80), ident: str(f, "accountIdentifier", 120), instr: str(f, "instructions", 600), enabled: str(f, "enabled", 8) !== "0", file: files[0] as File | undefined };
+    }
+    const j = await readJson(req);
+    return { name: clean(j.name, 60), holder: clean(j.accountHolder, 80), ident: clean(j.accountIdentifier, 120), instr: clean(j.instructions, 600), enabled: j.enabled !== false, file: undefined as File | undefined };
   };
+  const qrKey = (id: string, ext: string) => `payment-qr/${id}/${uid()}.${ext === "png" ? "png" : "jpg"}`;
   if (path === "/api/owner/payment-methods" && method === "POST") {
-    const f = pmFields(await readJson(req)), id = uid();
+    const f = await parsePm();
+    if (!f.file) fail(400, "Upload a QR code image for this payment method.");
+    const [chk] = await checkUploads(env, [f.file!], QR_EXTS);
+    const id = uid(), key = qrKey(id, chk.ext);
     const max = await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0)+1 n FROM payment_methods").first<{ n: number }>();
-    await env.DB.prepare("INSERT INTO payment_methods(id,name,account_holder,account_identifier,instructions,enabled,sort_order) VALUES(?,?,?,?,?,?,?)").bind(id, ...f, max?.n ?? 1).run();
+    await env.FILES.put(key, chk.data, { httpMetadata: { contentType: chk.mime } });
+    try {
+      await env.DB.prepare("INSERT INTO payment_methods(id,name,account_holder,account_identifier,instructions,qr_object_key,qr_content_type,enabled,sort_order) VALUES(?,?,?,?,?,?,?,?,?)")
+        .bind(id, f.name, f.holder || null, f.ident || null, f.instr || null, key, chk.mime, f.enabled ? 1 : 0, max?.n ?? 1).run();
+    } catch (e) { await queueDeletes(env, [key], "failed method insert"); throw e; }
     return json({ id }, 201);
   }
   if (path === "/api/owner/payment-methods/reorder" && method === "POST") {
@@ -551,23 +564,30 @@ async function handleOwner(c: Ctx, path: string, method: string): Promise<Respon
       const form = await req.formData().catch(() => fail(400, "Invalid form submission.")), raw = filesOf(form);
       if (raw.length !== 1) fail(400, "Choose one PNG or JPG image.");
       const [chk] = await checkUploads(env, raw, QR_EXTS);
-      const key = `payment-qr/${m.id}/${uid()}.${chk.ext === "png" ? "png" : "jpg"}`;
+      const key = qrKey(m.id, chk.ext);
       await env.FILES.put(key, chk.data, { httpMetadata: { contentType: chk.mime } });
       await env.DB.prepare("UPDATE payment_methods SET qr_object_key=?,qr_content_type=? WHERE id=?").bind(key, chk.mime, m.id).run();
       if (m.qr_object_key) await queueDeletes(env, [m.qr_object_key], "qr replaced");
       return json({ ok: true });
     }
-    if (method === "DELETE") {
-      await env.DB.prepare("UPDATE payment_methods SET qr_object_key=NULL,qr_content_type=NULL WHERE id=?").bind(m.id).run();
-      if (m.qr_object_key) await queueDeletes(env, [m.qr_object_key], "qr removed");
-      return json({ ok: true });
-    }
+    if (method === "DELETE") fail(400, "A QR code is required. Upload a replacement image instead of removing it.");
   }
   if ((p = match("/api/owner/payment-methods/:id", path))) {
     if (method === "PATCH") {
-      const f = pmFields(await readJson(req));
-      const r = await env.DB.prepare("UPDATE payment_methods SET name=?,account_holder=?,account_identifier=?,instructions=?,enabled=? WHERE id=?").bind(...f, p.id).run();
-      if (!r.meta.changes) fail(404, "Payment method not found.");
+      const f = await parsePm();
+      const cur = await env.DB.prepare("SELECT qr_object_key FROM payment_methods WHERE id=?").bind(p.id).first<any>();
+      if (!cur) fail(404, "Payment method not found.");
+      if (!f.file) {
+        await env.DB.prepare("UPDATE payment_methods SET name=?,account_holder=?,account_identifier=?,instructions=?,enabled=? WHERE id=?").bind(f.name, f.holder || null, f.ident || null, f.instr || null, f.enabled ? 1 : 0, p.id).run();
+        return json({ ok: true });
+      }
+      const [chk] = await checkUploads(env, [f.file], QR_EXTS);
+      const key = qrKey(p.id, chk.ext);
+      await env.FILES.put(key, chk.data, { httpMetadata: { contentType: chk.mime } });
+      try {
+        await env.DB.prepare("UPDATE payment_methods SET name=?,account_holder=?,account_identifier=?,instructions=?,enabled=?,qr_object_key=?,qr_content_type=? WHERE id=?").bind(f.name, f.holder || null, f.ident || null, f.instr || null, f.enabled ? 1 : 0, key, chk.mime, p.id).run();
+      } catch (e) { await queueDeletes(env, [key], "failed method update"); throw e; }
+      if (cur.qr_object_key) await queueDeletes(env, [cur.qr_object_key], "qr replaced");
       return json({ ok: true });
     }
     if (method === "DELETE") {
