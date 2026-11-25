@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "zein-e-services",
+  "name": "zein",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-25",
   "compatibility_flags": ["nodejs_compat"],
