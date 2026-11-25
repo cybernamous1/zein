@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zein-e-services",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Send /api/* to the Worker first so downloads/navigations are never swallowed by the static site.
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zein-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "FILES", "bucket_name": "zein-files" }
+  ],
+  // Hourly: retention cleanup, R2 delete retries, Discord notification retries.
+  "triggers": { "crons": ["0 * * * *"] },
+  // Ordinary (non-secret) variables. Secrets are set with `wrangler secret put` — see README.
+  "vars": {
+    "OWNER_USERNAME": "REPLACE_WITH_OWNER_USERNAME",
+    "CONTACT_EMAIL": "",
+    "MAX_FILE_BYTES": "5242880",
+    "MAX_REQUEST_BYTES": "15728640",
+    "DELIVERABLE_GRACE_DAYS": "7",
+    "INQUIRY_FILE_RETENTION_DAYS": "30",
+    "RECEIPT_RETENTION_DAYS": "60"
+  }
+}
