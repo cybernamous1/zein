@@ -34,14 +34,33 @@ async function busy(btn, fn) {
 const go = h => { location.hash = h; };
 
 function renderAccount() {
-  const a = $("#accountArea");
+  const a = $("#accountArea"), inApp = S.area && S.area !== "public";
   a.innerHTML = S.user
-    ? `<a class="btn mint small" href="#/${S.user.role === "owner" ? "owner" : "portal"}">${S.user.role === "owner" ? "Owner Dashboard" : "My Portal"}</a>
-       <a class="btn outline small" href="#/account">Account</a><button class="btn outline small" id="logoutBtn" type="button">Sign Out</button>`
+    ? (inApp ? `<a class="btn outline small" href="#/">Public site</a>` : `<a class="btn mint small" href="#/${S.user.role === "owner" ? "owner" : "portal"}">${S.user.role === "owner" ? "Owner Dashboard" : "My Portal"}</a><a class="btn outline small" href="#/account">Account</a>`)
+      + `<button class="btn outline small" id="logoutBtn" type="button">Sign Out</button>`
     : `<a class="btn outline small" href="#/login">Sign In</a><a class="btn primary small" href="#/register">Create Account</a>`;
   $("#logoutBtn")?.addEventListener("click", async e => busy(e.target, async () => {
     await api("/api/auth/logout", { method: "POST" }); S.user = null; S.csrf = ""; renderAccount(); toast("You have signed out."); go("#/");
   }));
+}
+const NAV = {
+  public: [["#/", "Home"], ["#/services", "Services"], ["#/how", "How It Works"], ["#/reviews", "Reviews"], ["#/faq", "FAQ"], ["#/contact", "Contact"]],
+  portal: [["#/portal", "My Requests"], ["#/inquiry", "New Inquiry", true], ["#/support", "Support"], ["#/account", "Account"]],
+  owner: [["#/owner/inbox", "Inbox"], ["#/owner/students", "Students"], ["#/owner/reviews", "Reviews"], ["#/owner/receipts", "Receipts"], ["#/owner/settings", "Settings"], ["#/account", "Account"]],
+};
+const PORTAL_ROUTES = new Set(["portal", "request", "inquiry", "support", "account"]);
+function areaOf(name) {
+  if (name === "owner") return "owner";
+  if (PORTAL_ROUTES.has(name)) return S.user?.role === "owner" ? "owner" : "portal";
+  return "public";
+}
+function renderNav(name, parts) {
+  const area = S.area, nav = $("#mainNav");
+  const cur = area === "public" ? (name === "home" ? "#/" : "#/" + name) : area === "owner" ? (name === "owner" ? "#/owner/" + (parts[1] || "inbox") : name === "account" ? "#/account" : "#/owner/inbox") : "#/" + (name === "request" ? "portal" : name);
+  nav.setAttribute("aria-label", area === "public" ? "Main" : area === "owner" ? "Owner dashboard" : "Student portal");
+  nav.innerHTML = NAV[area].map(([h, t, isNew]) => `<a href="${h}" ${isNew ? "data-new" : ""} class="${h === cur ? "on" : ""}" ${h === cur ? 'aria-current="page"' : ""}>${t}</a>`).join("");
+  document.body.dataset.area = area;
+  $("#siteFooter").classList.toggle("slim", area !== "public");
 }
 
 // ---------------- static content ----------------
@@ -84,8 +103,14 @@ const PRIVACY = `
 <h2>Cookies</h2><p>One secure, HttpOnly cookie keeps you signed in for up to 365 days unless you sign out.</p>`;
 
 // ---------------- views ----------------
-function homeView(scrollTo) {
-  const svc = S.config.services.map(n => `<article class="card"><div class="icon" aria-hidden="true">${SERVICE_INFO[n]?.[0] || "•"}</div><h3>${esc(n)}</h3><p>${esc(SERVICE_INFO[n]?.[1] || "")}</p><button class="btn small outline" data-start="${esc(n)}" type="button">Request this</button></article>`).join("");
+const faqHtmlFn = () => FAQ.map(([q, a]) => `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join("");
+const serviceCards = (withDesc = true) => S.config.services.map(n => `<article class="card"><div class="icon" aria-hidden="true">${SERVICE_INFO[n]?.[0] || "•"}</div><h3>${esc(n)}</h3>${withDesc ? `<p>${esc(SERVICE_INFO[n]?.[1] || "")}</p>` : ""}<button class="btn small outline" data-start="${esc(n)}" type="button">Request this</button></article>`).join("");
+const ctaBlock = (title = "Ready to get started?", text = "Create an account to submit and track your inquiry.") => `<section class="sec"><div class="sec-in"><div class="cta"><div><h2>${esc(title)}</h2><p>${esc(text)}</p></div><a class="btn amber" href="#/inquiry">Submit an Inquiry</a></div></div></section>`;
+const pageHead = (eyebrow, title, intro) => `<section class="page-head"><div class="sec-in"><span class="eyebrow">${esc(eyebrow)}</span><h1>${esc(title)}</h1>${intro ? `<p class="lead">${esc(intro)}</p>` : ""}</div></section>`;
+const eligibilityBlock = () => `<div class="grid"><div class="card"><h3>Elementary School</h3><p>Accepted.</p></div><div class="card"><h3>Junior High School</h3><p>Accepted.</p></div><div class="card"><h3>Senior High School</h3><p>Accepted.</p></div></div>
+    <div class="notice bad">College, university, undergraduate, postgraduate, master's and doctoral requests are not accepted.</div>`;
+
+function homeView() {
   app.innerHTML = `
   <section class="hero"><div class="hero-in"><div>
     <span class="eyebrow">Independent online service for students</span>
@@ -94,26 +119,36 @@ function homeView(scrollTo) {
     <div class="actions"><a class="btn amber" href="#/inquiry">Submit an Inquiry</a><a class="btn outline hero-btn" href="#/how">How It Works</a></div>
     <p class="fine">For Elementary, Junior High School and Senior High School students only. Every request is reviewed first; no grades or outcomes are guaranteed.</p></div>
     <aside class="hero-card" aria-label="Process"><ol><li><span>1</span>Pick a service</li><li><span>2</span>Share the details</li><li><span>3</span>Review &amp; submit</li><li><span>4</span>Track &amp; download</li></ol></aside></div></section>
-  <section class="sec" id="services"><div class="sec-in"><span class="eyebrow">What we can help with</span><h2>Available services</h2><div class="grid">${svc}</div>
-    <div class="notice">Not accepted: video editing, photo manipulation, complex graphic design, advanced statistical analysis, programming projects and complex research projects.</div></div></section>
-  <section class="sec alt" id="eligibility"><div class="sec-in"><span class="eyebrow">Eligibility</span><h2>Who we can help</h2>
-    <div class="grid"><div class="card"><h3>Elementary School</h3><p>Accepted.</p></div><div class="card"><h3>Junior High School</h3><p>Accepted.</p></div><div class="card"><h3>Senior High School</h3><p>Accepted.</p></div></div>
-    <div class="notice bad">College, university, undergraduate, postgraduate, master's and doctoral requests are not accepted.</div></div></section>
-  <section class="sec" id="how"><div class="sec-in"><span class="eyebrow">A straightforward process</span><h2>How it works</h2>
-    <div class="steps"><div class="card"><h3>Select a service</h3><p>Choose what fits your task.</p></div><div class="card"><h3>Provide details</h3><p>Describe the task, deadline and attach any files.</p></div><div class="card"><h3>Review</h3><p>Check everything before sending.</p></div><div class="card"><h3>Submit &amp; track</h3><p>Follow the status and download finished files in your portal.</p></div></div>
-    <div class="notice">Please submit 2–4 days before your deadline. Expected completion is within two business days after acceptance and receipt of complete instructions and materials; larger tasks may take longer and rush requests may be declined.</div></div></section>
-  <section class="sec alt" id="why"><div class="sec-in"><span class="eyebrow">Why choose Zein</span><h2>Simple, clear and respectful</h2>
+  <section class="sec"><div class="sec-in"><span class="eyebrow">What we can help with</span><h2>Available services</h2><div class="grid">${serviceCards(false)}</div><p class="more"><a href="#/services">See all services and details →</a></p></div></section>
+  <section class="sec alt"><div class="sec-in"><span class="eyebrow">Eligibility</span><h2>Who we can help</h2>${eligibilityBlock()}</div></section>
+  <section class="sec"><div class="sec-in"><span class="eyebrow">Why choose Zein</span><h2>Simple, clear and respectful</h2>
     <div class="grid"><div class="card"><h3>Free inquiries</h3><p>Asking and getting an assessment costs nothing.</p></div><div class="card"><h3>Private by design</h3><p>Use a nickname. Files are only visible to you and the owner.</p></div><div class="card"><h3>Clear tracking</h3><p>See each status change and message in one place.</p></div><div class="card"><h3>Voluntary support</h3><p>Contributions are optional and never change how your request is handled.</p></div></div></div></section>
-  <section class="sec" id="reviews"><div class="sec-in"><span class="eyebrow">Genuine feedback</span><h2>Reviews</h2><div id="reviewList" class="grid"><p class="fine">Loading reviews…</p></div>
-    <p class="fine">Only students with completed requests can review, and each review is approved by the owner before it appears.</p></div></section>
-  <section class="sec alt" id="faq"><div class="sec-in mid"><span class="eyebrow">FAQ</span><h2>Frequently asked questions</h2>${faqHtml()}</div></section>
-  <section class="sec"><div class="sec-in"><div class="cta"><div><h2>Ready to get started?</h2><p>Create an account to submit and track your inquiry.</p></div><a class="btn amber" href="#/inquiry">Submit an Inquiry</a></div></div></section>`;
-  api("/api/reviews").then(r => {
-    $("#reviewList").innerHTML = r.reviews.length ? r.reviews.map(x => `<article class="review"><div class="stars" aria-label="${x.rating} out of 5 stars">${"★".repeat(x.rating)}${"☆".repeat(5 - x.rating)}</div><b>${esc(x.service)}</b><p>${esc(x.comment || "Verified completed request.")}</p></article>`).join("") : '<p class="fine">No reviews yet — they will appear here after completed requests are reviewed.</p>';
-  }).catch(() => { $("#reviewList").innerHTML = '<p class="fine">Reviews are unavailable right now.</p>'; });
-  if (scrollTo) setTimeout(() => $("#" + scrollTo)?.scrollIntoView(), 30);
+  <section class="sec alt"><div class="sec-in"><span class="eyebrow">Learn more</span><h2>Explore Zein</h2>
+    <div class="grid"><a class="card linkcard" href="#/how"><h3>How It Works →</h3><p>The four steps from inquiry to delivery, and what to expect.</p></a><a class="card linkcard" href="#/reviews"><h3>Reviews →</h3><p>Feedback from students with completed requests.</p></a><a class="card linkcard" href="#/faq"><h3>FAQ →</h3><p>Answers about eligibility, timing, files and accounts.</p></a><a class="card linkcard" href="#/contact"><h3>Contact →</h3><p>How to reach the owner.</p></a></div></div></section>
+  ${ctaBlock()}`;
 }
-const faqHtml = () => FAQ.map(([q, a]) => `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join("");
+function servicesView() {
+  app.innerHTML = pageHead("What we can help with", "Services", "Simple school-related and digital tasks. Every request is assessed before it is accepted.") +
+  `<section class="sec"><div class="sec-in"><div class="grid">${serviceCards(true)}</div>
+    <div class="notice">Not accepted: video editing, photo manipulation, complex graphic design, advanced statistical analysis, programming projects and complex research projects. Zein also does not support plagiarism, fabricated research or misrepresentation.</div></div></section>
+  <section class="sec alt"><div class="sec-in"><span class="eyebrow">Eligibility</span><h2>Who we can help</h2>${eligibilityBlock()}</div></section>${ctaBlock()}`;
+}
+function howView() {
+  app.innerHTML = pageHead("A straightforward process", "How It Works", "From first inquiry to finished files, with every step visible in your account.") +
+  `<section class="sec"><div class="sec-in"><div class="steps"><div class="card"><h3>Select a service</h3><p>Choose what fits your task.</p></div><div class="card"><h3>Provide details</h3><p>Describe the task, deadline and attach any files.</p></div><div class="card"><h3>Review</h3><p>Check everything before sending.</p></div><div class="card"><h3>Submit &amp; track</h3><p>Follow the status and download finished files in your portal.</p></div></div></div></section>
+  <section class="sec alt"><div class="sec-in mid"><h2>What to expect</h2><ul class="checks"><li>Inquiries and initial assessments are free.</li><li>Submitting is not acceptance — each request is reviewed first and may be accepted or declined.</li><li>Please submit 2–4 days before your own deadline. Rush requests may be declined.</li><li>Expected completion is within two business days after acceptance and receipt of complete instructions and materials. Larger tasks may take longer, and this is explained before acceptance.</li><li>Outputs follow your instructions and common Philippine school conventions where reasonably possible. Please check the finished work against your school's requirements.</li><li>No grades or academic outcomes are guaranteed. Contributions are voluntary and never affect your request.</li></ul></div></section>${ctaBlock()}`;
+}
+function reviewsView() {
+  app.innerHTML = pageHead("Genuine feedback", "Reviews", "Only students with completed requests can review, and each review is approved by the owner before it appears.") +
+  `<section class="sec"><div class="sec-in"><div id="reviewList" class="grid"><p class="fine">Loading reviews…</p></div></div></section>${ctaBlock()}`;
+  api("/api/reviews").then(r => {
+    const el = $("#reviewList"); if (!el) return;
+    el.innerHTML = r.reviews.length ? r.reviews.map(x => `<article class="review"><div class="stars" aria-label="${x.rating} out of 5 stars">${"★".repeat(x.rating)}${"☆".repeat(5 - x.rating)}</div><b>${esc(x.service)}</b><p>${esc(x.comment || "Verified completed request.")}</p></article>`).join("") : '<p class="fine">No reviews yet — they will appear here after completed requests are reviewed.</p>';
+  }).catch(() => { const el = $("#reviewList"); if (el) el.innerHTML = '<p class="fine">Reviews are unavailable right now.</p>'; });
+}
+function faqView() {
+  app.innerHTML = pageHead("Answers", "Frequently Asked Questions", "") + `<section class="sec"><div class="sec-in mid">${faqHtmlFn()}<p class="more">Still have a question? <a href="#/contact">Contact us →</a></p></div></section>`;
+}
 const page = (title, inner, cls = "wrap mid") => { app.innerHTML = `<div class="${cls}"><h1>${esc(title)}</h1>${inner}</div>`; };
 
 function contactView() {
@@ -329,7 +364,6 @@ const OWNER_TABS = [["inbox", "Inbox"], ["students", "Students"], ["reviews", "R
 const SETTINGS_TABS = [["payments", "Payment Methods"], ["integrations", "Integrations"], ["security", "Security Log"]];
 function ownerShell(tab, inner, sub) {
   app.innerHTML = `<div class="wrap"><span class="eyebrow">Owner dashboard</span><h1>${esc(OWNER_TABS.find(t => t[0] === tab)[1])}</h1>
-  <nav class="tabs" aria-label="Owner sections">${OWNER_TABS.map(([k, n]) => `<a href="#/owner/${k}" class="${k === tab ? "on" : ""}">${n}</a>`).join("")}</nav>
   ${tab === "settings" ? `<nav class="tabs" aria-label="Settings">${SETTINGS_TABS.map(([k, n]) => `<a href="#/owner/settings/${k}" class="${k === sub ? "on" : ""}">${n}</a>`).join("")}</nav>` : ""}${inner}</div>`;
 }
 async function ownerView(tab = "inbox", sub = "payments") {
@@ -416,18 +450,22 @@ async function securityView() {
 }
 
 // ---------------- router ----------------
-const PUBLIC = new Set(["", "home", "services", "how", "reviews", "faq", "contact", "terms", "privacy", "login", "register", "recover", "reset", "owner-setup"]);
+const PAGE_TITLES = { home: "", services: "Services", how: "How It Works", reviews: "Reviews", faq: "FAQ", contact: "Contact", terms: "Terms", privacy: "Privacy", login: "Sign In", register: "Create Account", recover: "Reset Password", reset: "New Password", portal: "My Requests", inquiry: "Submit an Inquiry", request: "Request", support: "Support", account: "Account", owner: "Owner Dashboard" };
+const PROTECTED = new Set(["portal", "request", "inquiry", "support", "account", "owner"]);
 async function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent), name = parts[0] || "home";
-  $$("nav a").forEach(a => a.classList.toggle("on", a.getAttribute("href") === "#/" + (name === "home" ? "" : name)));
   try {
-    if (!PUBLIC.has(name) && !S.user) { S.after = location.hash; toast("Please sign in to continue."); return go("#/login"); }
+    if (PROTECTED.has(name) && !S.user) { S.after = location.hash; toast("Please sign in to continue."); return go("#/login"); }
     if (S.user && (name === "login" || name === "register") && !S.oneTime) { /* allow viewing, harmless */ }
     if (name === "owner" && S.user.role !== "owner") return go("#/portal");
     if (["portal", "inquiry"].includes(name) && S.user.role === "owner") return go("#/owner");
+    S.area = areaOf(name); renderNav(name === "" ? "home" : name, parts); renderAccount();
     switch (name) {
       case "": case "home": homeView(); break;
-      case "services": case "how": case "reviews": case "faq": homeView(name); break;
+      case "services": servicesView(); break;
+      case "how": howView(); break;
+      case "reviews": reviewsView(); break;
+      case "faq": faqView(); break;
       case "contact": contactView(); break;
       case "terms": page("Terms of Service", `<div class="panel legal">${TERMS}</div>`); break;
       case "privacy": page("Privacy Policy", `<div class="panel legal">${PRIVACY}</div>`); break;
@@ -443,17 +481,19 @@ async function route() {
       default: page("Page not found", '<p>That page does not exist. <a href="#/">Go home</a>.</p>');
     }
   } catch (e) { toast(e.message, true); if (e.status === 401) { S.user = null; renderAccount(); go("#/login"); } else if (e.status === 404) page("Not found", `<p>${esc(e.message)} <a href="#/">Go home</a>.</p>`); }
-  if (name !== "services" && name !== "how" && name !== "reviews" && name !== "faq") window.scrollTo(0, 0);
-  if (!["services", "how", "reviews", "faq"].includes(name)) app.focus({ preventScroll: true });
+  window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  document.title = (PAGE_TITLES[name || "home"] ? PAGE_TITLES[name || "home"] + " — " : "") + "Zein E-Services";
+  app.focus({ preventScroll: true });
 }
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-start]");
   if (b) { S.wizard = newWizard(); S.wizard.service = b.dataset.start; S.wizard.step = 2; go("#/inquiry"); }
-  if (e.target.closest('a[href="#/inquiry"]') && !e.target.closest("[data-new]") && !S.wizard) S.wizard = newWizard();
+  if (e.target.closest("[data-new]")) S.wizard = newWizard();
+  else if (e.target.closest('a[href="#/inquiry"]') && !S.wizard) S.wizard = newWizard();
 });
 window.addEventListener("hashchange", route);
 (async function init() {
   $("#year").textContent = new Date().getFullYear();
   try { S.config = await api("/api/config"); const me = await api("/api/me"); S.user = me.user; } catch { app.innerHTML = '<div class="wrap"><p>The site could not load. Please refresh.</p></div>'; return; }
-  renderAccount(); route();
+  route();
 })();
