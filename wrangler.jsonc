@@ -25,8 +25,8 @@
   "triggers": { "crons": ["0 * * * *"] },
   // Ordinary (non-secret) variables. Secrets are set with `wrangler secret put` — see README.
   "vars": {
-    "OWNER_USERNAME": "REPLACE_WITH_OWNER_USERNAME",
-    "CONTACT_EMAIL": "",
+    "OWNER_USERNAME": "zein",
+    "CONTACT_EMAIL": "cybernamous.official@gmail.com",
     "MAX_FILE_BYTES": "5242880",
     "MAX_REQUEST_BYTES": "15728640",
     "DELIVERABLE_GRACE_DAYS": "7",
