@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "zein-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "e85b3585-9196-4ef7-87c8-58a31828d378",
       "migrations_dir": "migrations"
     }
   ],
