@@ -338,10 +338,58 @@ function bindRequest(i, d, owner) {
   $("#delForm")?.addEventListener("submit", e => { e.preventDefault(); const f = [...$("#df").files], err = checkFilesClient(f); if (!f.length) return toast("Choose a file first.", true); if (err) return toast(err, true);
     busy(e.target.querySelector("button"), async () => { await api(`/api/inquiries/${id}/files`, { method: "POST", form: filesForm("#df") }); toast("Deliverables uploaded."); reload(); }); });
 }
+/** Turn owner-written instructions into readable blocks without altering their wording.
+ *  Numbered steps (on separate lines, or run together on one line) become an ordered list that keeps the owner's own numbers. */
+function instructionsHtml(text) {
+  let lines = String(text || "").replace(/\r\n?/g, "\n").split("\n").map(l => l.trim()).filter(Boolean);
+  lines = lines.flatMap(splitInlineSteps);
+  const out = []; let list = [];
+  const flush = () => { if (list.length) { out.push(`<ol class="steps-list">${list.join("")}</ol>`); list = []; } };
+  for (const l of lines) {
+    const m = l.match(/^(\d{1,3})\s*[.)]\s+(.*)$/);
+    if (m) list.push(`<li value="${Number(m[1])}">${esc(m[2])}</li>`);
+    else { flush(); out.push(`<p>${esc(l)}</p>`); }
+  }
+  flush();
+  return out.join("");
+}
+/** "1. Open app 2. Scan code 3. Pay" on a single line → three steps (only when numbers run 1,2,3… in order). */
+function splitInlineSteps(line) {
+  if (!/^\s*1\s*[.)]\s/.test(line)) return [line];
+  const parts = []; let rest = line, n = 1;
+  while (true) {
+    const next = new RegExp(`\\s${n + 1}\\s*[.)]\\s`).exec(rest);
+    if (!next) break;
+    parts.push(rest.slice(0, next.index).trim()); rest = rest.slice(next.index).trim(); n++;
+  }
+  parts.push(rest.trim());
+  return parts.length > 1 ? parts : [line];
+}
+let lightboxCleanup = null;
+function openLightbox(src, label, trigger) {
+  closeLightbox(false);
+  const ov = document.createElement("div");
+  ov.className = "lightbox"; ov.setAttribute("role", "dialog"); ov.setAttribute("aria-modal", "true"); ov.setAttribute("aria-label", `${label} QR code, enlarged`);
+  ov.innerHTML = `<button type="button" class="lb-close" aria-label="Close preview">✕ <span>Close</span></button><figure class="lb-fig"><img class="lb-img" alt="${esc(label)} QR code" src="${esc(src)}"><figcaption>${esc(label)}</figcaption></figure>`;
+  document.body.appendChild(ov); document.body.classList.add("lb-open");
+  const close = () => closeLightbox(true);
+  const im = $(".lb-img", ov);
+  const fit = () => { if (!im.naturalWidth) return; const aw = Math.min(innerWidth * 0.94, 820), ah = innerHeight - 150, k = Math.min(aw / im.naturalWidth, ah / im.naturalHeight, 3); im.style.width = Math.max(1, Math.floor(im.naturalWidth * k)) + "px"; };
+  im.addEventListener("load", fit); window.addEventListener("resize", fit); if (im.complete) fit();
+  const onKey = e => { if (e.key === "Escape") { e.preventDefault(); close(); } else if (e.key === "Tab") { e.preventDefault(); $(".lb-close", ov).focus(); } };
+  ov.addEventListener("click", e => { if (!e.target.closest(".lb-img, figcaption")) close(); });
+  document.addEventListener("keydown", onKey);
+  lightboxCleanup = () => { document.removeEventListener("keydown", onKey); window.removeEventListener("resize", fit); ov.remove(); document.body.classList.remove("lb-open"); if (trigger && trigger.isConnected) trigger.focus(); };
+  $(".lb-close", ov).focus();
+}
+function closeLightbox(restore) { if (lightboxCleanup) { const c = lightboxCleanup; lightboxCleanup = null; c(); } }
+window.addEventListener("hashchange", () => closeLightbox(false));
+document.addEventListener("click", e => { const b = e.target.closest("[data-zoom]"); if (b) openLightbox(b.dataset.zoom, b.dataset.label || "Payment", b); });
+
 async function supportView() {
   const r = await api("/api/payment-methods");
-  app.innerHTML = `<div class="wrap mid"><h1>Optional support</h1><div class="notice ok">Contributions are <b>completely voluntary</b>. There is no minimum, no deadline and no priority for contributing, and it never affects whether your request is accepted. Zein does not process payments on this site — send any amount you wish through your own app, if you wish.</div>
-  <div class="grid">${r.methods.map(m => `<article class="card"><h3>${esc(pmLabel(m))}</h3>${m.account_holder ? `<p>Account name: <b>${esc(m.account_holder)}</b></p>` : ""}${m.account_identifier ? `<p>Account: <b>${esc(m.account_identifier)}</b></p>` : ""}${m.instructions ? `<p>${esc(m.instructions)}</p>` : ""}${m.has_qr ? `<img class="qr" alt="${esc(pmLabel(m))} QR code" src="/api/payment-methods/${m.id}/qr">` : ""}</article>`).join("") || '<p class="fine">No contribution methods are available right now. You can still leave a thank-you message below.</p>'}</div>
+  app.innerHTML = `<div class="wrap support"><h1>Optional support</h1><div class="notice ok">Contributions are <b>completely voluntary</b>. There is no minimum, no deadline and no priority for contributing, and it never affects whether your request is accepted. Zein does not process payments on this site — send any amount you wish through your own app, if you wish.</div>
+  ${r.methods.length ? `<div class="pay-grid ${r.methods.length === 1 ? "one" : ""}">${r.methods.map(m => `<article class="card pay-card"><div class="pay-info"><h3>${esc(pmLabel(m))}</h3>${m.account_holder ? `<p>Account name: <b>${esc(m.account_holder)}</b></p>` : ""}${m.account_identifier ? `<p>Account: <b>${esc(m.account_identifier)}</b></p>` : ""}${m.instructions ? `<div class="pay-instr">${instructionsHtml(m.instructions)}</div>` : ""}</div>${m.has_qr ? `<div class="pay-qr"><button type="button" class="qr-btn" data-zoom="/api/payment-methods/${m.id}/qr" data-label="${esc(pmLabel(m))}" aria-label="Enlarge ${esc(pmLabel(m))} QR code"><img class="qr" alt="${esc(pmLabel(m))} QR code" src="/api/payment-methods/${m.id}/qr"></button><small class="hint">Tap the QR code to enlarge</small></div>` : ""}</article>`).join("")}</div>` : '<p class="fine">No contribution methods are available right now. You can still leave a thank-you message below.</p>'}
   ${S.user.role === "student" ? `<div class="panel"><h2>Say thanks (optional)</h2><p class="fine">Upload a receipt if you donated, or just leave a message — or skip this page entirely.</p><form id="rcForm">
   ${r.methods.length ? `<div class="f"><label for="pm">Method used (optional)</label><select id="pm" name="paymentMethodId"><option value="">—</option>${r.methods.map(m => `<option value="${m.id}">${esc(pmLabel(m))}</option>`).join("")}</select></div>` : ""}
   <div class="f"><label for="rm">Thank-you message</label><textarea id="rm" name="message" maxlength="500"></textarea></div><div class="f"><label for="rf">Receipt (optional, JPG, PNG or PDF, up to ${bytesFmt(S.config.limits.fileBytes)})</label><input id="rf" type="file" accept=".jpg,.jpeg,.png,.pdf"></div>
